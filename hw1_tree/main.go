@@ -9,16 +9,20 @@ import (
 	"strings"
 )
 
-type fileInfo struct {
-	filePath string
-	depth    int
+type fsCompInfo struct {
+	sysPath string
+	depth   int
+	isDir   bool
+	size    int64
+
+	parent *fsCompInfo
 }
 
-type ByCase []fileInfo
+type ByCase []fsCompInfo
 
-func (files ByCase) Len() int           { return len(files) }
-func (files ByCase) Swap(i, j int)      { files[i], files[j] = files[j], files[i] }
-func (files ByCase) Less(i, j int) bool { return files[i].filePath < files[j].filePath }
+func (fsComp ByCase) Len() int           { return len(fsComp) }
+func (fsComp ByCase) Swap(i, j int)      { fsComp[i], fsComp[j] = fsComp[j], fsComp[i] }
+func (fsComp ByCase) Less(i, j int) bool { return fsComp[i].sysPath < fsComp[j].sysPath }
 
 func main() {
 
@@ -30,28 +34,6 @@ func main() {
 	path := os.Args[1]
 	printFiles := len(os.Args) == 3 && os.Args[2] == "-f"
 
-	var files []fileInfo
-
-	if err := filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
-		if !printFiles && !info.IsDir() {
-			return nil
-		}
-
-		files = append(files, fileInfo{
-			filePath: path,
-			depth:    strings.Count(path, "\\"),
-		})
-		return nil
-	}); err != nil {
-		panic("error occured while scaning dir")
-	}
-
-	sort.Sort(ByCase(files))
-
-	for _, file := range files {
-		fmt.Println(file.filePath, file.depth)
-	}
-
 	err := dirTree(out, path, printFiles)
 	if err != nil {
 		panic(err.Error())
@@ -59,5 +41,54 @@ func main() {
 }
 
 func dirTree(out io.Writer, path string, printFiles bool) error {
+
+	fsComps := getAndSortComponents(path, printFiles)
+	for _, comp := range fsComps {
+		fmt.Println(comp.sysPath, " ", comp.parent)
+	}
 	return nil
+}
+
+func getAndSortComponents(path string, printFiles bool) []fsCompInfo {
+
+	var fsComps []fsCompInfo
+	var root *fsCompInfo
+	var dirParent *fsCompInfo
+
+	if err := filepath.Walk(path,
+
+		func(path string, info os.FileInfo, err error) error {
+			if !printFiles && !info.IsDir() {
+				return nil
+			}
+
+			contDepth := strings.Count(path, "\\")
+			if dirParent != nil && contDepth <= dirParent.depth {
+				dirParent = root
+			}
+
+			node := fsCompInfo{
+				sysPath: path,
+				depth:   strings.Count(path, "\\"),
+				isDir:   info.IsDir(),
+				size:    info.Size(),
+				parent:  dirParent,
+			}
+
+			if node.parent == nil {
+				root = &node
+			}
+
+			fsComps = append(fsComps, node)
+			if info.IsDir() {
+				dirParent = &node
+			}
+
+			return nil
+		}); err != nil {
+		panic("error occured while scaning dir")
+	}
+
+	sort.Sort(ByCase(fsComps))
+	return fsComps
 }
