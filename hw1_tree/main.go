@@ -1,28 +1,18 @@
 package main
 
 import (
-	"fmt"
 	"io"
+	"io/fs"
+	"io/ioutil"
 	"os"
-	"path/filepath"
-	"sort"
+	"strconv"
 	"strings"
 )
 
-type fsCompInfo struct {
-	sysPath string
-	depth   int
-	isDir   bool
-	size    int64
-
-	parent *fsCompInfo
-}
-
-type ByCase []fsCompInfo
-
-func (fsComp ByCase) Len() int           { return len(fsComp) }
-func (fsComp ByCase) Swap(i, j int)      { fsComp[i], fsComp[j] = fsComp[j], fsComp[i] }
-func (fsComp ByCase) Less(i, j int) bool { return fsComp[i].sysPath < fsComp[j].sysPath }
+var PREFIX_PIPE = "│\t"
+var ELBOW = "└───"
+var TEE = "├───"
+var SPACE_PREFIX = "\t"
 
 func main() {
 
@@ -40,55 +30,71 @@ func main() {
 	}
 }
 
-func dirTree(out io.Writer, path string, printFiles bool) error {
-
-	fsComps := getAndSortComponents(path, printFiles)
-	for _, comp := range fsComps {
-		fmt.Println(comp.sysPath, " ", comp.parent)
-	}
+func dirTree(out io.Writer, root string, printFiles bool) error {
+	var pipesCounter, spaceCounter int = 0, 0
+	recursiveTree(printFiles, out, root, pipesCounter, spaceCounter)
 	return nil
 }
 
-func getAndSortComponents(path string, printFiles bool) []fsCompInfo {
+func getStringSize(fsComp os.FileInfo) string {
 
-	var fsComps []fsCompInfo
-	var root *fsCompInfo
-	var dirParent *fsCompInfo
+	var size string
 
-	if err := filepath.Walk(path,
+	if fsComp.Size() == 0 {
+		size = " (empty)"
+	} else {
+		var withContent = []string{" (", strconv.Itoa(int(fsComp.Size())), "b)"}
+		size = strings.Join(withContent, "")
+	}
+	return size
+}
 
-		func(path string, info os.FileInfo, err error) error {
-			if !printFiles && !info.IsDir() {
-				return nil
-			}
+func excludeFiles(levelComps []fs.FileInfo) []fs.FileInfo {
+	var result []fs.FileInfo
+	for _, comp := range levelComps {
+		if comp.IsDir() {
+			result = append(result, comp)
+		}
+	}
+	return result
+}
 
-			contDepth := strings.Count(path, "\\")
-			if dirParent != nil && contDepth <= dirParent.depth {
-				dirParent = root
-			}
+func recursiveTree(flag bool, out io.Writer, path string, pipesCounter int, spacesCounter int) error {
 
-			node := fsCompInfo{
-				sysPath: path,
-				depth:   strings.Count(path, "\\"),
-				isDir:   info.IsDir(),
-				size:    info.Size(),
-				parent:  dirParent,
-			}
-
-			if node.parent == nil {
-				root = &node
-			}
-
-			fsComps = append(fsComps, node)
-			if info.IsDir() {
-				dirParent = &node
-			}
-
-			return nil
-		}); err != nil {
-		panic("error occured while scaning dir")
+	levelComps, err := ioutil.ReadDir(path)
+	if !flag {
+		levelComps = excludeFiles(levelComps)
 	}
 
-	sort.Sort(ByCase(fsComps))
-	return fsComps
+	levelCount := len(levelComps)
+	size := ""
+
+	connector := strings.Repeat(PREFIX_PIPE, int(pipesCounter)) +
+		strings.Repeat(SPACE_PREFIX, int(spacesCounter))
+
+	for idx, fsComp := range levelComps {
+
+		var outputArr []string
+
+		if !fsComp.IsDir() {
+			size = getStringSize(fsComp)
+		}
+
+		if idx == levelCount-1 {
+			pipesCounter -= 1
+			spacesCounter += 1
+			outputArr = []string{connector, ELBOW + fsComp.Name(), size, "\n"}
+		} else {
+			outputArr = []string{connector, TEE + fsComp.Name(), size, "\n"}
+		}
+
+		temp := strings.Join(outputArr, "")
+		out.Write([]byte(temp))
+
+		if fsComp.IsDir() {
+			recursiveTree(flag, out, path+string(os.PathSeparator)+fsComp.Name(), pipesCounter+1, spacesCounter)
+		}
+		size = ""
+	}
+	return err
 }
