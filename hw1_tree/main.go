@@ -16,13 +16,16 @@ var SPACE_PREFIX = "\t"
 
 func main() {
 
+	var path string
+	var printFiles bool
+
 	out := os.Stdout
 	if !(len(os.Args) == 2 || len(os.Args) == 3) {
 		panic("usage go run main.go . [-f]")
 	}
 
-	path := os.Args[1]
-	printFiles := len(os.Args) == 3 && os.Args[2] == "-f"
+	path = os.Args[1]
+	printFiles = len(os.Args) == 3 && os.Args[2] == "-f"
 
 	err := dirTree(out, path, printFiles)
 	if err != nil {
@@ -32,14 +35,13 @@ func main() {
 
 func dirTree(out io.Writer, root string, printFiles bool) error {
 	var pipesCounter, spaceCounter int = 0, 0
-	recursiveTree(printFiles, out, root, pipesCounter, spaceCounter)
-	return nil
+	var reverseFiles = false
+	err := recursiveTree(printFiles, out, root, pipesCounter, spaceCounter, reverseFiles)
+	return err
 }
 
 func getStringSize(fsComp os.FileInfo) string {
-
 	var size string
-
 	if fsComp.Size() == 0 {
 		size = " (empty)"
 	} else {
@@ -59,28 +61,42 @@ func excludeFiles(levelComps []fs.FileInfo) []fs.FileInfo {
 	return result
 }
 
-func recursiveTree(flag bool, out io.Writer, path string, pipesCounter int, spacesCounter int) error {
+func isNotDir(fsComp fs.FileInfo) bool {
+	return !fsComp.IsDir()
+}
+
+func recursiveTree(printFiles bool, out io.Writer, path string,
+	pipesCounter int, spacesCounter int, reverseFiles bool) error {
 
 	levelComps, err := ioutil.ReadDir(path)
-	if !flag {
+	if !printFiles {
 		levelComps = excludeFiles(levelComps)
 	}
+	var connector string
+	var levelCount int = len(levelComps)
 
-	levelCount := len(levelComps)
-	size := ""
-
-	connector := strings.Repeat(PREFIX_PIPE, int(pipesCounter)) +
-		strings.Repeat(SPACE_PREFIX, int(spacesCounter))
+	if !reverseFiles {
+		connector = strings.Repeat(PREFIX_PIPE, int(pipesCounter)) +
+			strings.Repeat(SPACE_PREFIX, int(spacesCounter))
+	} else {
+		connector = SPACE_PREFIX +
+			strings.Repeat(PREFIX_PIPE, int(pipesCounter)) +
+			strings.Repeat(SPACE_PREFIX, int(spacesCounter-1))
+	}
 
 	for idx, fsComp := range levelComps {
 
+		var size string
 		var outputArr []string
 
-		if !fsComp.IsDir() {
+		if isNotDir(fsComp) {
 			size = getStringSize(fsComp)
 		}
 
 		if idx == levelCount-1 {
+			if fsComp.IsDir() && pipesCounter == 0 {
+				reverseFiles = true
+			}
 			pipesCounter -= 1
 			spacesCounter += 1
 			outputArr = []string{connector, ELBOW + fsComp.Name(), size, "\n"}
@@ -88,13 +104,13 @@ func recursiveTree(flag bool, out io.Writer, path string, pipesCounter int, spac
 			outputArr = []string{connector, TEE + fsComp.Name(), size, "\n"}
 		}
 
-		temp := strings.Join(outputArr, "")
-		out.Write([]byte(temp))
-
+		out.Write([]byte(strings.Join(outputArr, "")))
 		if fsComp.IsDir() {
-			recursiveTree(flag, out, path+string(os.PathSeparator)+fsComp.Name(), pipesCounter+1, spacesCounter)
+			recursiveTree(
+				printFiles, out,
+				path+string(os.PathSeparator)+fsComp.Name(),
+				pipesCounter+1, spacesCounter, reverseFiles)
 		}
-		size = ""
 	}
 	return err
 }
